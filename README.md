@@ -2,7 +2,7 @@
 Course handouts for the UW SISCER Introduction to Survival Course. The easiest way to download all the materials is in upper right on the "code" button you should be able to download the zip file.
 
 ### Day 1 Handouts
-_Survival_Day1slides_2026.pdf_ - course slides
+_Survival_Day1slides_2026v2.pdf_ - Course slides updated on July 8.
 
 _Survival_Day1_LectureCodeExamples.Rmd_ - Rmarkdown file with R code to for data analysis in slides
 

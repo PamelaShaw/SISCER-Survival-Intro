@@ -1,5 +1,5 @@
 ## SISCER-Survival-Intro
-Course handouts for the UW SISCER Introduction to Survival Course
+Course handouts for the UW SISCER Introduction to Survival Course. The easiest way to download all the materials is in upper right on the "code" button you should be able to download the zip file.
 
 ### Day 1 Handouts
 _Survival_Day1slides_2026.pdf_ - course slides

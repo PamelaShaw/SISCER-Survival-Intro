@@ -1,0 +1,236 @@
+---
+title: "SISCER Survival Course R Practicum Day 1"
+author: "Pamela Shaw"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: yes
+    toc_float: yes
+---
+
+```{r setup, warning = F, message = F}
+knitr::opts_chunk$set(echo = TRUE)
+library(survival)
+library(ggsurvfit)
+library(km.ci)
+library(survminer) #ggsurvplot
+library(gtsummary) #survfit table
+library(lmtest) # likelihood ratio test
+
+```
+
+## Dataset: `veteran` from the **survival** package
+
+```{r load-data}
+data(cancer, package = "survival")
+
+# convert days to months
+veteran$months <- veteran$time / (365.25 / 12)  
+head(veteran)
+```
+
+## Exercises
+
+1. **Kaplan-Meier Curves**: Plot Kaplan-Meier survival curves by cell type. 
+    * Make one version with **pointwise confidence intervals**.  
+    * Make another with **simultaneous confidence bands**. 
+
+2. **Log-Rank Test**: Compute and interpret the log-rank statistic comparing survival by cell type.
+
+3. **Assumptions**: What assumption is required for the log-rank test to be most efficient?
+
+4. **Check Proportional Hazards**: Check the proportional hazards assumption.  
+    * Graphically using log(-log(S(t))).  
+    * Using a formal test via `cox.zph`.  
+    * Conclude whether the log-rank test is reasonable in this case.
+
+5. **Peto-Peto Test**: Compute the Peto-Peto test and compare results to part 2.
+
+6. **Improved Visualization**: Revisit your Kaplan-Meier curves and improve the plot aesthetics.  
+    * Add confidence intervals.  
+    * Include a risk table.  
+    * Modify color, font size, or confidence interval format (shaded vs lines).
+
+7. **Restricted Mean Survival**: Compare the restricted mean survival times between cell types, restricted to 1 year.
+
+8. **Cox Proportional Hazards Model**: Fit a multivariable Cox model adjusting for cell type, treatment, prior therapy, and Karnofsky score.  
+    i. Do the HRs for cell type summarize the stratified K-M curves well?  
+    ii. What is the HR for adeno vs squamous cell type?  
+    iii. How important is cell type in the model? Compare this to the unadjusted log-rank result.  
+    iv. What is the HR associated with a 10-point increase in Karnofsky score?  
+    v. Evaluate the PH assumption using `cox.zph`.  
+    vi. Refit the model stratifying on cell type. Are any PH violations still present?
+    
+## Answers 
+
+### 1. Kaplan-Meier Curves
+
+#### Pointwise confidence bands 
+
+```{r Q1a}
+vfit.surv <- survfit(Surv(months, status) ~ celltype, data = veteran, conf.type = "log-log")
+survfit2(Surv(months, status) ~ celltype, data = veteran) %>%
+  ggsurvfit() +
+  labs(
+    x = "Months",
+    y = "Overall survival probability"
+  ) +
+  add_confidence_interval() 
+```
+
+#### Simultaneous confidence bands
+
+```{r Q1b}
+# Subset to one cell type, e.g., "squamous"
+# Can repeat for each cell type 
+squamous_data <- subset(veteran, celltype == "squamous")
+
+# Create surv object
+surv_simul <- survfit(Surv(months, status) ~ 1, data = squamous_data)
+
+# Compute simultaneous confidence band
+fit.simul <- km.ci(surv_simul, method = "logep")
+
+# Plot
+plot(fit.simul, xlim = c(0, 12), xlab = "Months", ylab = "Survival Probability")
+title("Simultaneous logEP 95% CI: Squamous")
+
+
+```
+
+### 2. Log-Rank Test
+
+The log-rank test for equality of survival curves across cell types yielded a 
+p-value < 0.001, indicating strong evidence of a significant difference in survival distributions among the cell types.
+
+```{r Q2}
+survdiff(Surv(months, status) ~ celltype, data = veteran)
+```
+
+### 3. Assumptions
+
+The log-rank test assumes proportional hazards, meaning the hazard ratios between groups are constant over time.
+
+### 4. Check Proportional Hazards
+
+The complementary log-log curves are not parallel, suggesting a violation to the 
+proportional hazards assumption. In addition, the score test from cox.zph 
+(p = 0.03) rejects the proportional-hazards assumption.
+
+```{r Q4}
+# Graphical check
+plot(vfit.surv, fun = "cloglog", col = 1:4, xlab = "log(t)", ylab = "log(-log(S(t)))", main = "Examining log hazard")
+legend("bottomright", legend = levels(veteran$celltype), col = 1:4, lty = 1, bty = "n")
+
+# Formal test
+vfit.cox.unadj <- coxph(Surv(months, status) ~ celltype, data = veteran)
+vfit.ph <- cox.zph(vfit.cox.unadj,terms=F)
+print(vfit.ph)
+plot(vfit.ph, hr = TRUE)
+### Note we added "terms=F" so that we would get a plot for each coefficient. Without that in the cox.zph statement there would only one plot for cell type, and an overall pvalue for that variable.
+```
+
+### 5. Peto-Peto Test
+
+Like the log-rank test, the Peto-Peto test for equality of survival curves 
+across cell types yielded a p-value < 0.001, indicating strong evidence of a significant difference in survival distributions among the cell types.
+
+```{r Q5}
+survdiff(Surv(months, status) ~ celltype, data = veteran, rho = 1)
+```
+
+### 6. Improved Visualization
+
+```{r Q6}
+survfit2(Surv(months, status) ~ celltype, data = veteran) %>%
+  ggsurvfit() +
+  add_confidence_interval(type = "ribbon") +
+  add_risktable() +
+  labs(title = "Survival by Cell Type", x = "Months", y = "Survival Probability")
+```
+
+### 7. Restricted Mean Survival
+
+```{r Q7}
+print(vfit.surv, rmean = 12)
+
+### IF we wanted to compare two groups, we could form our own t-test by hand, following code we did in Lecture t=diff/se. (I dont know of an easier way in R, but I'm sure there must be). 
+
+# for differnece or the RMST (rmean) between squamous and small cell have
+diff=5.61-2.55
+## since independent groups, add variance to compute SE for difference
+se.diff<-sqrt(.797^2 + .459^2)
+Zstat=diff/se.diff
+pvalue <- 2 * (pnorm(abs(Zstat), lower.tail = FALSE))
+pvalue
+### Note this would be more precise as t-statistic but would need to calculate Saitterthwhaite's formula to calculate df by hand.
+## https://www.statisticshowto.com/satterthwaite-formula/
+##Or perhaps instead find an R package to do this test of difference for RMST properly for us!
+
+```
+
+### 8. Cox Proportional Hazards Model
+
+#### Part (i)
+
+Yes, the HRs for cell type summarize the stratified K-M curves well; for example, 
+the adeno group has the highest hazard ratio, and we can visually see from the 
+K-M plots that it has the fastest drop in survival. 
+
+```{r Q8i}
+# Multivariable Cox model
+vfit.cox.mv <- coxph(Surv(months, status) ~ celltype + trt + prior + karno, data = veteran)
+summary(vfit.cox.mv)
+```
+
+#### Part (ii)
+
+The hazard ratio for adeno vs squamous cell type is 3.24. 
+
+#### Part (iii)
+
+```{r Q8iii}
+# Likelihood ratio test (LRT) for cell type
+vfit.cox.mv0 <- coxph(Surv(months, status) ~ trt + prior + karno, data = veteran)
+lrtest(vfit.cox.mv0, vfit.cox.mv)
+
+# unadjusted log rank result
+survdiff(Surv(months, status) ~ celltype, data = veteran)
+
+```
+The p-value from LRT from multivariate model and logrank test from univariable model were very similar, both <0.001. The unadjusted test was a little smaller, which isnt that suprising as some of its significance may have been due to correlation with other variables left out of the model 
+
+#### Part (iv)
+
+The HR associated with a 10-point increase in Karnofsky score is $exp(-0.0315 * 10) = 0.73$.
+
+You could get confidence interval for this quantity in this way (note I am sure there is a function in R to find the confidence interval for a function of a regression coefficient. Perhpas one of you could find it. But for a monotonic transformation, it's easy to do confidence interval for 10*beta on log-scale and then exponentiate.
+
+```{r CI_HR_10ptincrease}
+beta.karno<-summary(vfit.cox.mv)$coef[6,1]
+se.beta.karno<-summary(vfit.cox.mv)$coef[6,3]
+LL<-10*beta.karno - qnorm(.975)*10*se.beta.karno
+UL<-10*beta.karno + qnorm(.975)*10*se.beta.karno
+
+round(c(exp(LL),exp(UL)),3)
+```
+
+#### Part (v)
+
+```{r Q8v}
+# PH assumption
+vfit.mv.ph <- cox.zph(vfit.cox.mv,terms=F)
+print(vfit.mv.ph)
+```
+
+#### Part (vi)
+
+```{r}
+# Stratified model
+vfit.cox.strat <- coxph(Surv(months, status) ~ trt + prior + karno + strata(celltype), data = veteran)
+summary(vfit.cox.strat)
+
+vfit.strat.ph <- cox.zph(vfit.cox.strat)
+print(vfit.strat.ph)
+```
+From these results, we see some residual violations of the PH assumption, but things got a bit better.

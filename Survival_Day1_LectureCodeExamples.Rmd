@@ -1,0 +1,715 @@
+---
+title: "SISCER_Survival_Day1"
+author: "Pamela Shaw"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(survival)
+library(ggsurvfit)
+library(km.ci)
+
+```
+
+## Kaplan-Meier Survival Curves Example 1
+
+The code below introduces the Kaplan-Meier estimator using a toy dataset with no censoring.
+It shows how to fit a basic survival curve and summarize survival probabilities 
+over time using `survfit()`.
+
+```{r Example1_Lee1980}
+# Create a simple hypothetical dataset with 10 subjects, no censoring
+status <- rep(1, 10)
+time <- c(4, 5, 6, 8, 8, 8, 10, 10, 11, 12)
+leedata <- data.frame(status, time)
+
+# Fit a Kaplan-Meier survival curve for a single (unstratified) group
+lee.surv <- survfit(Surv(time, status) ~ 1, data = leedata)
+
+# Summarize survival probabilities at each observed event time
+summary(lee.surv)
+
+```
+
+## Plot the K-M curves
+
+The code below plots the Kaplan-Meier survival curve from the previous example using
+base R graphics.
+
+```{r Example1_Lee1980_plot}
+# Plot the Kaplan-Meier survival curve with labeled axes
+plot(lee.surv, ylab = "Probability of Survival", xlab = "time")
+title("Survival Curves Lee 1980")
+
+```
+
+## Comparison of pointwise 95% CI 
+
+The code below compares different methods for calculating confidence intervals on
+KM curves.  It contrasts the default (log) intervals with log(-log) transformed
+intervals.
+
+```{r Example1_Lee1980_pointwiseCI_compare}
+# Refit the Kaplan-Meier model using log(-log) transformation for CIs 
+lee.surv2 <- survfit(Surv(time, status) ~ 1, data = leedata, conf.type = "log-log")
+summary(lee.surv2)
+
+# Plotting code 
+par(mfrow = c(1, 2))
+
+# Plot the original KM curve with default (log) confidence intervals
+plot(lee.surv, ylab = "Probability of Survival", xlab = "time")
+title("KM Curve +default (log) 95% CI")
+
+# Plot the KM curve with log(-log) confidence intervals
+plot(lee.surv2, ylab = "Probability of Survival", xlab = "time")
+title("KM Curve + log(-log) 95% CI")
+
+```
+
+## Example 2: K-M curve with censoring
+
+The code below introduces right-censoring by including both events and censored 
+observations. It fits Kaplan-Meier survival curves and compares default versus 
+log(-log) confidence intervals.
+
+```{r Example2}
+# Create a dataset with 10 subjects, including both events (1) and censored 
+# observations (0)
+status <- c(1, 1, 0, 1, 0, 1, 0, 1, 1, 0)
+time <- c(1, 2, 4, 5, 6, 8, 8, 10, 10, 12)
+ex2data <- data.frame(status, time)
+
+# Fit Kaplan-Meier survival curve with default confidence intervals
+ex2.surv <- survfit(Surv(time, status) ~ 1, data = ex2data)
+summary(ex2.surv)
+
+# Fit again using log(-log) transformed confidence intervals
+ex2.surv2 <- survfit(Surv(time, status) ~ 1, data = ex2data, conf.type = "log-log")
+summary(ex2.surv2)
+
+```
+
+## Example 2 KM Curve + pointwise 95% CI 
+
+The code below plots the Kaplan-Meier survival curve for the censored dataset 
+introduced earlier. It includes pointwise 95% confidence intervals and marks 
+the censored observations with tick marks.
+
+```{r Example2_plot}
+# Plot Kaplan-Meier survival curve with pointwise 95% confidence intervals
+# 'mark.time=TRUE' adds tick marks at censored observations
+plot(ex2.surv, ylab = "Probability of Survival", xlab = "time", mark.time = TRUE)
+title("Example 2 Survival Curve with pointwise 95% CI")
+
+```
+
+## Example 2 KM Curve pointwise 95% CI comparison
+
+The code below visually compares two approaches for displaying 95% confidence 
+intervals on KM curves: the default (log) method and the log(-log) 
+transformation.
+
+```{r Example2_plot_comparison}
+par(mfrow = c(1, 2))
+
+# Plot KM curve with default (log) confidence intervals
+plot(ex2.surv, ylab = "Probability of Survival", xlab = "time", mark.time = TRUE)
+title("KM Curve + default (log) 95% CI")
+
+# Plot KM curve with log(-log) confidence intervals
+plot(ex2.surv2, ylab = "Probability of Survival", xlab = "time", mark.time = TRUE)
+title("KM Curve + log-log 95% CI")
+
+```
+
+## Example KM curve + simultaneous confidence bands
+
+The code below introduces simultaneous confidence intervals, which provide 
+coverage over the entire survival curve rather than at specific time points. 
+It compares pointwise log-transformed (default) intervals with simultaneous bands computed using the logEP method from the `km.ci` package.
+
+```{r Example2_simultaneous}
+par(mfrow = c(1, 2))
+
+# Plot KM curve with pointwise arcsine-transformed 95% confidence intervals
+plot(ex2.surv2, ylab = "Probability of Survival", xlab = "time", xlim = c(0, 12))
+title("Pointwise (log-log) 95% CI")
+
+# Use km.ci() from the 'km.ci' package to compute simultaneous confidence 
+# intervals (logEP method)
+fit.simul <- km.ci(ex2.surv, method = "logep")
+plot(fit.simul, xlim = c(0, 12), xlab = "time")
+title("Simultaneous logEP 95%CI")
+
+```
+
+## AML Example: K-M curves by intervention arm
+
+The code below uses the `aml` dataset to compare survival curves between two 
+treatment arms. Kaplan-Meier curves are plotted with confidence intervals and 
+a legend, allowing for visual assessment of treatment effects on survival.
+
+```{r Example_byIntervention}
+# Load the built-in 'aml' dataset from the survival package
+data(cancer, package = "survival")
+
+# Fit Kaplan-Meier survival curves stratified by treatment group ('x')
+leukemia.surv <- survfit(Surv(time, status) ~ x, data = aml)
+
+# Plot survival curves for each treatment arm with confidence intervals
+plot(leukemia.surv, ylab = "Probability of Survival", conf.int = TRUE, col = 1:2)
+legend(100, 0.9, c("Maintenance", "No Maintenance"), col = 1:2, lty = 1)
+title("Survival Curves by Intervention Arm")
+
+```
+
+## A more informative plot using ggsurvplot
+
+The code below uses the `ggsurvfit` package to create an enhanced Kaplan-Meier 
+plot by treatment arm. It adds a risk table, custom colors, and improved 
+visual formatting using `ggplot2`-style theming for clearer presentation.
+
+```{r Example_byIntervention_ggplot}
+# Load the ggsurvfit package for ggplot-based survival curves
+library(ggsurvfit)
+
+# Fit survival curves by treatment arm and create a ggplot-based Kaplan-Meier plot
+survfit2(Surv(time, status) ~ x, data = aml) %>%
+  ggsurvfit(linewidth = 0.8) +  
+  add_risktable(risktable_stats = "n.risk", 
+                stats_label = list(n.risk = "Number at Risk")) + 
+  scale_ggsurvfit() + 
+  scale_color_manual(values = c('black', 'red')) +
+  scale_fill_manual(values = c('black', 'red')) + 
+  theme_classic(base_size = 18) +  
+  theme(
+    legend.text = element_text(size = rel(1)), 
+    legend.position = "inside", 
+    legend.position.inside = c(0.8, 0.8)
+  )
+
+```
+
+## More fine-tuning formats using ggsurvplot
+
+The code below demonstrates additional customization of Kaplan-Meier plots using 
+`ggsurvfit`. 
+
+```{r Example_byIntervention_ggplot2}
+# Create a customized Kaplan-Meier plot using ggsurvfit
+survfit2(Surv(time, status) ~ x, data = aml) %>%
+  ggsurvfit(linewidth = 0.8) +
+  add_censor_mark(size = 3) +
+  coord_cartesian(xlim = c(0, 52)) +
+  add_risktable(
+    size = 4,
+    theme = theme_risktable_default(axis.text.y.size = 10, plot.title.size = 12),
+    risktable_stats = "{n.risk} ({cum.event})"
+  ) +
+  scale_ggsurvfit() +
+  scale_color_manual(values = c('black', 'red')) +
+  scale_fill_manual(values = c('black', 'red')) +
+  theme_classic(base_size = 18) + 
+  theme(
+    axis.text.x = element_text(size = rel(0.8)),
+    text = element_text(size = 16),
+    legend.text = element_text(size = rel(0.8)),
+    legend.position = "inside",
+    legend.position.inside = c(0.8, 0.8)
+  ) +
+  add_confidence_interval()
+
+```
+
+## Another example of shaded confidence intervals
+
+The code below shows how to generate a Kaplan-Meier plot using the `lung` 
+dataset, with shaded confidence intervals and a number-at-risk table.
+
+```{r shaded_CI}
+# Plot an overall Kaplan-Meier curve using the 'lung' dataset,
+# including shaded confidence intervals and a number-at-risk table
+survfit2(Surv(time, status) ~ 1, data = lung) %>% 
+  ggsurvfit() +
+  labs(
+    x = "Days",
+    y = "Overall survival probability"
+  ) + 
+  add_confidence_interval() +
+  add_risktable()
+
+```
+
+## A Lifetable example
+
+The code below introduces life table analysis using grouped time intervals. 
+It uses the `lifetab()` function from the `KMsurv` package to calculate 
+survival estimates based on interval-level data, including number at risk, 
+events, and censoring per interval.
+
+```{r Lifetable}
+# Load the KMsurv package, which contains the lifetab() function
+library(KMsurv)
+
+# Define the beginning of each time interval (increasing order)
+k <- c(0, 3, 5, 7, 10, 12, 16, 19, 28, 31)
+
+# Number at risk at the start of each interval
+nk <- c(569, 278, 180, 107, 55, 39, 18, 12, 5)
+
+# Number of events (e.g., deaths) in each interval
+dk <- c(121, 33, 24, 22, 2, 10, 1, 5, 1)
+
+# Number of censored/lost subjects in each interval
+ck <- c(170, 65, 49, 30, 14, 11, 5, 2, 1)
+
+options(width = 120)
+
+# Create and display the life table based on interval data
+lifetab(tis = k, ninit = nk[1], nlost = ck, nevent = dk)
+```
+
+
+## `lung` data description
+
+The code below loads and explores the `lung` dataset from the `survival` 
+package. It fits an overall Kaplan-Meier survival curve using log(-log) 
+confidence intervals, prints out the survfit object (which has the median survival estimate and confidence interval), and uses the summary command to examine the survival estimates at event times.
+
+```{r lung_desc}
+# Load the lung cancer dataset from the survival package
+data(cancer, package = "survival")
+
+# Display the first few rows to examine the structure of the dataset
+head(lung)
+
+# Fit an overall Kaplan-Meier survival curve using the lung dataset
+# Using log(-log) transformation for confidence intervals
+lung.surv <- survfit(Surv(time, status) ~ 1, data = lung, conf.type = "log-log")
+
+# Print the fitted survfit object and display the summary estimates
+lung.surv
+summary(lung.surv)
+
+```
+## Median survival
+
+The code below calculates and displays the median survival time from a 
+Kaplan-Meier model into a formatted table using the `tbl_survfit()` function from the 
+`gtsummary` package. 
+
+```{r lung_prob_table}
+# Load gtsummary package for producing publication-style summary tables
+library(gtsummary)  
+
+# Fit Kaplan-Meier curve (no covariates, i.e. overall survival)
+# Use log-log confidence intervals, then format the output as a table
+survfit(Surv(time, status) ~ 1, data = lung, conf.type = "log-log") %>% 
+  tbl_survfit(
+    probs = 0.5,  # Show the median survival time
+    label_header = "**Median survival (95% CI)**" 
+  )
+  
+```
+
+## Survfit provides summaries at specified times
+
+The code below demonstrates how to extract survival probabilities at specific 
+time points (e.g., 6, 12, 24, 60 months) using the `summary()` function on a 
+Kaplan-Meier model. Time is first converted from days to months for clarity.
+
+```{r lung_survfit_table}
+# Convert survival time from days to months
+lung$months <- lung$time / (365.25 / 12)
+
+# Fit Kaplan-Meier curve and report survival probabilities at 6, 12, 24, and 60 months
+summary(
+  survfit(Surv(months, status) ~ 1, data = lung, conf.type = "log-log"), 
+  times = c(6, 12, 24, 60)
+)
+
+```
+
+## Table of survival at a given time point
+
+The code below summarizes survival probabilities at selected time points 
+(6, 12, 24, 60 months) stratified by sex. It relabels the sex variable for 
+clarity and uses `tbl_survfit()` to generate a well-formatted summary table 
+with custom column headers.
+
+```{r lung_prob_table2}
+# Convert survival time from days to months
+lung$months <- lung$time / (365.25 / 12)
+
+# Relabel the sex variable to show "male" and "female" instead of numeric codes
+lung$sex <- factor(lung$sex, labels = c("male", "female"))
+
+# Fit Kaplan-Meier curves by sex, and summarize survival at specific months
+survfit(Surv(months, status) ~ sex, data = lung, conf.type = "log-log") %>%
+  tbl_survfit(
+    times = c(6, 12, 24, 60),  # Time points to report survival probabilities
+    label_header = "**{time}-Month**"  # Custom column headers for time points
+  )
+
+```
+
+
+## Pass tbl_survfit() a list of survfit() objects
+
+The code below shows how to pass a list of survival models to `tbl_survfit()` 
+to compare survival probabilities across multiple groups—such as overall 
+survival and stratified by treatment. It reports survival at 12 and 24 months.
+
+```{r lung_prob_table3}
+# Create a list of survival curves: one for overall survival, one by treatment group
+list(
+  survfit(Surv(ttdeath, death) ~ 1, trial),           # Overall survival
+  survfit(Surv(ttdeath, death) ~ trt, trial)          # Survival by treatment
+) |>
+  # Summarize survival probabilities at 12 and 24 months
+  tbl_survfit(times = c(12, 24))
+
+```
+
+
+## Comparing survival curves at a time point
+
+The code below compares survival probabilities between males and females at 
+1 year. It extracts survival estimates from a Kaplan-Meier model, computes 
+the difference, standard error, Z statistic, and p-value to assess statistical 
+significance at that time point.
+
+```{r lung_compare_1yr}
+# Convert time from days to years
+lung$years <- lung$time / 365.25
+
+# Fit Kaplan-Meier survival curves by sex
+lung.survgrp <- survfit(Surv(years, status) ~ sex, data = lung, conf.type = "log-log")
+
+options(width = 100)
+
+# Extract survival probabilities at 1 year
+results <- summary(lung.survgrp, times = 1)
+
+# Compute difference in survival at 1 year between males and females
+diff <- results$surv[1] - results$surv[2]
+
+# Compute p-value 
+se.diff <- sqrt(results$std.err[1]^2 + results$std.err[2]^2)
+Zstat <- diff / se.diff
+pvalue <- 2 * (pnorm(abs(Zstat), lower.tail = FALSE))
+
+# Display survival estimates and test results
+results
+round(c(diff = diff, se = se.diff, Z = Zstat, p = pvalue), 4)
+
+```
+
+## Restricted mean survival
+
+The code below demonstrates how to compute and display the restricted mean 
+survival time (RMST) up to 1 year for each group in a Kaplan-Meier model. 
+RMST provides an interpretable summary of average survival time within a 
+restricted follow-up period.
+
+```{r lung_rms_sex}
+# Print survival curves with restricted mean survival time (RMST) up to 1 year
+print(lung.survgrp,rmean=1)
+
+```
+
+### Two group RMST comparison
+
+The code below compares restricted mean survival times (RMST) between males and 
+females using the `survRM2` package. It includes binary recoding of the sex 
+variable, performs the RMST comparison up to 1 year, and visualizes survival 
+curves with shaded RMST areas. An option for covariate adjustment is included.
+
+```{r}
+# Load the RMST comparison package
+library(survRM2)
+
+# Ensure sex is coded as 0/1 (required by rmst2)
+# We'll recode: male = 0, female = 1
+lung$sex_binary <- ifelse(lung$sex == "female", 1, 0)
+
+# Run RMST comparison between sexes up to 1 year
+a <- rmst2(time = lung$years, status = lung$status, arm = lung$sex_binary,tau = 1)
+print(a)
+
+# Plot survival curves and shaded RMST regions
+### however the curves had minimal customization described in the help
+plot(a, xlab = "Years", ylab = "Survival Probability", density = 60)
+
+# OPTIONAL: RMST comparison with covariate adjustment (e.g., age)
+# a_adj <- rmst2(time = lung$years, status = lung$status, arm = lung$sex_binary,
+#                tau = 1, covariates = data.frame(age = lung$age))
+# print(a_adj)
+
+```
+
+## Male vs Female survival curves
+
+The code below visualizes Kaplan-Meier survival curves for males and females 
+using `ggsurvfit`. It includes shaded confidence intervals and a number-at-risk 
+table, allowing clear comparison of survival probabilities by sex over time.
+
+```{r shaded_CI_sex}
+# plot curves with ggplot2-based ggsurvfit, adding shaded confidence intervals 
+# and a risk table
+survfit2(Surv(months, status) ~ sex, data = lung) %>% 
+  ggsurvfit() +  
+  labs(
+    x = "Months",
+    y = "Overall survival probability"
+  ) + 
+  add_confidence_interval() + 
+  add_risktable()
+
+```
+
+## Test for difference between males and females
+
+The code below uses the log-rank test (`survdiff`) to evaluate whether there is 
+a statistically significant difference in survival between male and female 
+patients. It compares the entire survival curves non-parametrically.
+
+```{r lung_LRsex}
+# Test whether survival differs between male and female patients
+# 'survdiff' performs a log-rank test comparing survival distributions
+survdiff(Surv(months, status) ~ sex, data = lung)
+
+```
+
+## Examine complementary log-log plot
+
+The code below creates a complementary log-log plot to assess the proportional
+hazards assumption between sexes. Parallel lines in the transformed scale 
+(log(-log(S(t))) vs log(time)) suggest that the hazard ratio is constant over 
+time.
+
+```{r lung_cloglog_sex}
+# Create a complementary log-log plot to assess proportional hazards assumption
+# 'fun="cloglog"' transforms survival curves to a log(-log(S(t))) vs. log(time) scale
+# This helps evaluate if hazard ratios are constant over time (i.e., parallel lines)
+plot(lung.survgrp, fun = "cloglog", col = 1:2, 
+     xlab = "log(t)", ylab = "log(-log(S(t)))", 
+     main = "Examining log hazard")
+
+# Add legend to distinguish curves by sex
+legend(.02, 1, c("Male", "Female"), col = 1:2, lty = 1, bty = "n")
+```
+
+
+## Examine risktable ECOG score
+
+The code below simplifies the ECOG performance score by collapsing higher values 
+into a single category. It then plots Kaplan-Meier curves by ECOG group using 
+`ggsurvfit`, adding shaded confidence intervals and a number-at-risk table for 
+interpretability.
+
+```{r lung_ecog}
+# Simplify ECOG performance score by collapsing values >2 into a single group
+# (coded as 2)
+lung$myph.ecog <- ifelse(lung$ph.ecog > 2, 2, lung$ph.ecog)
+
+# Fit Kaplan-Meier survival curves by simplified ECOG group
+survfit2(Surv(months, status) ~ myph.ecog, data = lung) %>% 
+  ggsurvfit() +                           
+  labs(
+    x = "Months",
+    y = "Overall survival probability"
+    ) + 
+  add_confidence_interval() +           
+  add_risktable() 
+```
+
+## Examine complementary log-log plot ECOG score
+
+The code below plots Kaplan-Meier curves and complementary log-log 
+transformations for simplified ECOG groups. It visually assesses whether the 
+proportional hazards assumption holds by checking for whether the transformed
+plots are parallel.
+
+```{r lung_cloglog_ecog}
+# Collapse ECOG scores >2 into a single category to simplify comparison
+lung$myph.ecog <- ifelse(lung$ph.ecog > 2, 2, lung$ph.ecog)
+
+# Set up side-by-side plotting
+par(mfrow = c(1, 2))
+
+# Plot standard Kaplan-Meier survival curves by ECOG score
+# Allows visual comparison of survival probability over time
+plot(survfit(Surv(months, status) ~ myph.ecog, data = lung), 
+     col = 1:3, xlab = "months", ylab = "Probability of survival", 
+     main = "Survival by ECOG score")
+legend(20, 1, c("0", "1", "2"), col = 1:3, lty = 1, bty = "n")
+
+# Plot complementary log-log transformed survival curves
+# Used to assess proportional hazards assumption visually (look for roughly parallel lines)
+plot(survfit(Surv(months, status) ~ myph.ecog, data = lung), 
+     fun = "cloglog", col = 1:3, xlab = "log(t)", ylab = "log(-log(S(t)))", 
+     main = "Examining log hazard")
+legend(.2, 1, c("0", "1", "2"), col = 1:3, lty = 1, bty = "n")
+
+```
+
+## Test for difference between ECOG groups
+
+The code below uses a log-rank test (`survdiff`) to assess whether survival 
+differs significantly across ECOG performance status groups. It tests for 
+overall differences in survival curves among the categories.
+
+```{r lung_LRecog}
+# Perform a log-rank test to assess whether survival differs by ECOG score
+survdiff(Surv(months, status) ~ myph.ecog, data = lung)
+
+```
+
+## Peto-Peto example
+
+The code below compares survival between treatment groups in the `ovarian`
+dataset. It plots Kaplan-Meier curves with risk tables and performs survival 
+tests using two weighting schemes: standard log-rank (rho = 0) and Peto-Peto 
+(rho = 1), which emphasizes early differences.
+
+```{r peto_ovarian_ex}
+# Fit survival curves for ovarian cancer data by treatment group
+# Use log-log confidence intervals (more accurate at tail ends)
+ocafit <- survfit(Surv(futime, fustat) ~ rx, data = ovarian, conf.type = "log-log")
+
+# Plot survival curves with risk table using 'survminer'
+library(survminer)
+ggsurvplot(ocafit, xlab = "Days", ylab = "Overall survival probability",
+           main = "Ovarian cancer survival by treatment", risk.table = TRUE)
+
+# Run survival tests using different weights:
+# rho = 1 → Peto-Peto test (more weight on early differences)
+# rho = 0 → standard log-rank test
+survdiff(Surv(futime, fustat) ~ rx, data = ovarian, rho = 1)
+survdiff(Surv(futime, fustat) ~ rx, data = ovarian, rho = 0)
+
+```
+
+## Multivariable Cox example
+
+The code below fits a multivariable Cox proportional hazards model using the 
+`lung` dataset. It includes predictors such as sex, age, ECOG score, and 
+Karnofsky performance score, providing hazard ratios and confidence intervals 
+for each covariate.
+
+```{r Cox_lung}
+# Fit a multivariable Cox proportional hazards model
+# Predictors: sex, age, ECOG score, Karnofsky performance score
+fitmv <- coxph(Surv(time, status) ~ sex + age + ph.ecog + ph.karno, data = lung)
+summary(fitmv)
+
+```
+
+## Cox vs log-rank
+
+The code below compares two approaches for estimating an unadjusted difference in survival between groups 
+(1) a Cox proportional hazards model estimating hazard ratios, and 
+(2) a log-rank test comparing survival distributions between sexes. 
+Note the test using the score statistic from (1) is the same as the log-rank test statistic
+
+```{r Cox_LR}
+# Cox model: tests association of sex with survival, adjusting for time
+fit <- coxph(Surv(time, status) ~ sex, data = lung)
+summary(fit)
+
+# Log-rank test: compares survival distributions between sexes non-parametrically
+survdiff(Surv(months, status) ~ sex, data = lung)
+
+```
+
+## Testing proportional hazards 
+
+The code below tests the proportional hazards (PH) assumption for the 
+multivariable Cox model using `cox.zph`. It checks whether the effect of each 
+covariate is constant over time, both graphically and by using a score test for each variable interacted with time (Default is the linear term time). See survival package for more details.
+
+```{r test_PH}
+# Test proportional hazards assumption for the multivariable model
+# Each covariate tested for time-varying effects 
+temp <- cox.zph(fitmv)
+print(temp)       
+plot(temp) 
+
+```
+
+## Univariable testing proportional hazards 
+
+The code below tests the proportional hazards assumption for a single covariate 
+(sex) using `cox.zph`. It fits a univariable Cox model and checks for time- 
+dependent effects with the score test, as described above, and plots of the estimated change in the coefficient over time.
+
+```{r test_PH_logrank}
+# Fit Cox model for a single variable (sex) and test PH assumption
+fit <- coxph(Surv(time, status) ~ sex, data = lung)
+temp <- cox.zph(fit)
+print(temp)       
+plot(temp)        
+
+```
+
+## ECOG - time-varying coefficient?
+
+The code below fits a multivariable Cox model including ECOG score and checks 
+whether its effect violates the proportional hazards assumption. The 
+`cox.zph` function and beta(t) plots help detect time-varying effects.
+
+```{r strat_Cox1}
+# Fit multivariable Cox model without stratification
+# Used here to assess whether ECOG might violate the PH assumption
+fitmvStrat <- coxph(Surv(time, status) ~ sex + age + ph.karno + ph.ecog, data = lung)
+summary(fitmvStrat)
+
+# Examine proportional hazards assumption
+temp <- cox.zph(fitmvStrat)
+print(temp)
+par(mfrow = c(2, 2))
+plot(temp)
+```
+
+
+## Stratified Cox model
+
+The code below fits a stratified Cox model to handle a potential violation of 
+the proportional hazards assumption for ECOG. By stratifying on ECOG, the 
+model allows separate baseline hazard functions across ECOG groups, improving 
+model validity. PH assumptions are reassessed post-stratification.
+
+```{r strat_Cox2}
+# Fit stratified Cox model to account for potential PH violation in ECOG
+# Stratifies by ph.ecog so that baseline hazard differs across strata
+fitmvStrat <- coxph(Surv(time, status) ~ sex + age + ph.karno + strata(ph.ecog), 
+                    data = lung)
+summary(fitmvStrat)
+
+# Check PH assumption again (should now be improved for ECOG)
+temp <- cox.zph(fitmvStrat)
+print(temp)
+par(mfrow = c(2, 2))
+plot(temp)
+
+```
+
+## Relationships between variables
+
+The code below explores relationships between key variables to check for 
+potential confounding or imbalances. It summarizes ECOG scores by sex and 
+age distributions across ECOG groups.
+
+```{r strat_explore}
+# Explore potential confounding or imbalance between ECOG and sex
+tapply(lung$myph.ecog, lung$sex, summary)
+
+# Explore how age differs across ECOG groups
+tapply(lung$age, lung$myph.ecog, summary)
+```
+
+

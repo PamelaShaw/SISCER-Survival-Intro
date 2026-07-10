@@ -17,13 +17,13 @@ _Survival_Day1_Rpracticum_QwithAnswers.html_- R markdown output file with Answer
 ### Day 2 Handouts coming soon
 _Survival_Day2slides_2026.pdf_ - course slides
 
-_Survival_Day2_LectureCodeExamples.Rmd_ - Rmarkdown file with R code to for data analysis in slides
+_Survival_Day2_LectureCodeExamples2026.Rmd_ - Rmarkdown file with R code to for data analysis in slides
 
-_Survival_Day2_LectureCodeExamples.html_ - Output of Rmarkdown file with anaylsis results
+_Survival_Day2_LectureCodeExamples2026.html_ - Output of Rmarkdown file with anaylsis results
 
-_Survival_Day2_Rpracticum_Questions.html_ - Questions for R Practicum
+_Survival_Day2_Rpracticum_Questions2026.html_ - Questions for R Practicum
 
-_Survival_Day2_Rpracticum_QwithAnswers.Rmd_- R markdown file with Answers for R Practicum
+_Survival_Day2_Rpracticum_QwithAnswers2026.Rmd_- R markdown file with Answers for R Practicum
 
-_Survival_Day2_Rpracticum_QwithAnswers.html_- R markdown output file with Answers for R Practicum
+_Survival_Day2_Rpracticum_QwithAnswers2026.html_- R markdown output file with Answers for R Practicum
 

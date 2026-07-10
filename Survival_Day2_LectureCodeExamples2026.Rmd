@@ -1,0 +1,471 @@
+---
+title: "SISCER Survival Day 2"
+author: "Pamela Shaw"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(survival)
+library(ggsurvfit)
+library(km.ci)
+library(survminer) #ggsurvplot
+library(ciTools) #survreg CI tools
+library(SurvRegCensCov)  #More survreg CI tools
+library(tidycmprsk)
+```
+
+## Handling non-proportional hazards
+
+This content is largely summarizing content from Terry Therneau's vignette for time dependency at https://cran.r-project.org/web/packages/survival/vignettes/timedep.pdf
+
+## Veteran data set in survival package
+Let's load the data and look at a few summaries.
+And fit a multivariable cox model for the association of treatment, prior therapy, and karnofsky score with the hazard for death.
+```{r veteran_desc}
+data(cancer, package="survival")
+nrow(veteran)
+head(veteran)
+summary(veteran$karno)
+table(veteran$status) #number of deaths
+
+## mulltivariable cox model
+vfit0 <- coxph(Surv(time, status) ~ trt + prior + karno, veteran)
+summary(vfit0)
+
+# transformation to understand effect of 10 point increases
+veteran$mykarno <- veteran$karno/10
+vfit <- coxph(Surv(time, status) ~ trt + prior + mykarno, veteran)
+summary(vfit)
+```
+
+## Let's assess the proportional hazards assumption
+
+```{r veteran_ph}
+vfit.ph <- cox.zph(vfit)
+print(vfit.ph)
+plot(vfit.ph,hr=T)
+```
+
+We can see strong evidence of non-proportional hazards for the karnofsky score.
+
+## Model approach 1: Have beta(t) for karno be a step function over different intervals: 3 months and 6 months (remember time measured in days so cut points are at 90 and 180 days)
+
+```{r veteran_step}
+vet2 <- survSplit(Surv(time, status) ~ ., data= veteran, cut=c(90, 180),
+                  episode= "tgroup", id="id")
+vet2[1:7, c("id", "tstart", "time", "status", "tgroup", "age", "karno")]
+vfit2 <- coxph(Surv(tstart, time, status) ~ trt + prior + karno:strata(tgroup),
+               data=vet2)
+vfit2
+```
+This model suggests the effect of karnofsky score is really only important in first few months. If this score measures an acute illness, then it makes sense that the baseline score would be less important later on.
+
+## We can check the PH assumption
+
+We can use `cox.zph()` to check to see if there is still evidence of a time-varying effect for this variable.
+
+```{r veteran_step_check}
+cox.zph(vfit2)
+```
+
+The `cox.zph()` results shows no further time dependent effect of Karnofsky
+score. Since we used the original graph to pick the cut points, this post-hoc result needs to be viewed with caution.
+
+## Visualizing what the model says about survival
+
+*(again leaning heavily on Therneau's vignette)*
+
+When plotting survival curves from a fitted Cox model, the default is to estimate the curve for the average covariate value. For treatment, and other categorical variables (e.g. sex) this doesn't make much sense. Instead we will create a hypothetical data set "with the three time intervals for two hypothetical subjects labeled as 'curve 1' and 'curve 2.' One has a Karnofsky of 40 and the other a Karnofsky of 75, both on treatment 1 and with no prior therapy. Each has the appropriate values for the time dependent covariate tgroup, which is 1, 2, 3 over 0–90, 90–180 and 180+ days, respectively. We will draw curves for the first year."
+
+Below we will plot the fitted curves for these two indivudals (dotted lines)
+and compare to the Kaplan-Meier survival curves for groups with a karnofsky score above and below the median (solid lines).
+
+```{r visualize_fit}
+quantile(veteran$karno)
+
+cdata <- data.frame(tstart= rep(c(0,90,180), 2),
+  time = rep(c(90,180, 365), 2),
+  status= rep(0,6), #necessary, but ignored
+  tgroup= rep(1:3, 2),
+  trt = rep(1,6),
+  prior= rep(0,6),
+  karno= rep(c(40, 75), each=3),
+  curve= rep(1:2, each=3))
+
+cdata
+
+sfit <- survfit(vfit2, newdata=cdata, id=curve)
+km <- survfit(Surv(time, status) ~ I(karno>60), veteran)
+
+plot(km, xmax= 365, col=1:2, lwd=2, xlab="Days from enrollment",
+     ylab="Survival")
+legend(250, .8, c("0", "1"),col=1:2,lty=1,bty="n",title="Karno > 60")
+lines(sfit, col=1:2, lty=2, lwd=2)
+title("Comparing K-M (solid line) to Cox model prediction (dashed line)")
+```
+
+## Model approach 2: Model beta(t) for karno as a function of time
+
+For sake of an example, let's try $\beta(t) = a + b \;log(t)$. This transformation is often chosen, which will increase more slowly as time gets larger. That likely is better than a simple linear transformation in this context. Recall the `cox.zph()` approximation of $\beta(t)$ for karno with confidence intervals, with added horizontal lines for the null (red dashed) and the fitted beta (red dotted).
+
+```{r examine_karnobetat}
+vfit <- coxph(Surv(time, status) ~ trt + prior + mykarno, veteran)
+plot(vfit.ph[3])
+abline(h=0, col=2,lty=2) #null
+abline(h=vfit$coef[3],lty=3,col=2) #fitted coef for karno
+```
+
+We can use the `cox.zph()` function to examine coefficient of karno on the scale $\log(20+t)$, which we will see below produces an approximate linear function for beta for the first 200 days.
+
+```{r log.coxph}
+vfit <- coxph(Surv(time, status) ~ trt + prior + karno, veteran)
+zp <- cox.zph(vfit, transform= function(time) log(time +20))
+zp
+```
+
+We can now fit the Cox model allowing the coefficient for karno to vary by  $\log(20+t)$, that is let $\beta(t)= a + b \log(t+20)$. This model finds $a$ and $b$ along with the time-invariant coefficients for the other covariates.
+```{r tt}
+vfit3 <- coxph(Surv(time, status) ~ trt + prior + karno + tt(karno),
+               data = veteran, tt = function(x, t, ...) x * log(t+20))
+vfit3
+```
+
+**Very important:** In order to add a true time-varying coefficient and not just add time as a covariate in the model, you need the `tt()` function in R. Similar issues exist in other software.
+
+The resulting fitted time-varying coefficient for karno is estimated as 
+$\beta(t) = -0.125 + 0.021 * \log(t + 20)$
+
+We can see how well the fitted line is doing by adding it to the `cox.zph()` plot for the karno coefficient.
+
+```{r examine_timevarcoef}
+plot(zp[3])
+abline(coef(vfit3)[3:4], lwd=2, lty=3, col=2)
+```
+
+We can also implement a spline approach. 
+
+```{r spline_coef}
+vfit4 <- coxph(Surv(time, status) ~ trt + prior + karno + tt(karno),
+               data=veteran,
+               tt = function(x, t, ...) x* nsk(t, knots=c(5, 100, 200, 400),
+                                               Boundary.knots = FALSE))
+vfit4
+```
+The plot functions for cox.zph() dont work well with a spline so could look at the spline outside this function
+```{r spline_coef_plot}
+smat <- cbind(1, nsk(1:600, knots=c(100, 200), Boundary.knots = c(5,400)))
+estimate <- smat%*% coef(vfit4)[3:6]
+sd.est <- sqrt(diag(smat %*% vcov(vfit4)[3:6, 3:6] %*% t(smat)))
+ytemp <- c(estimate) + outer(sd.est, c(0, -1.96, 1.96), '*')
+matplot(1:600/30.5, ytemp, type='l', lty=c(1,2,2), lwd=c(2,1,1), col=1,
+xlab="Months post randomization", ylab="Estimated Karnofsky effect")
+abline(0,0, lty=3)
+```
+In first 5 months, we see coeffient effect decrease in magnitude towards zero, with very wide CI beyond for the beta coefficient beyond that.
+
+# Competing risks
+
+MGUS analysis from https://cran.r-project.org/web/packages/survival/vignettes/compete.
+
+## MGUS: Overall survival
+
+Analysis of overall survival, follows as before. Females appear to have a higher overall survival.
+
+```{r overall}
+mfit1 <- survfit(Surv(futime, death) ~ sex, data=mgus2)
+
+plot(mfit1, col=c(1,2), xscale=12, mark.time=FALSE, 
+     lwd=2, xlab="Years post diagnosis", ylab="Survival")
+legend("topright",c("female", "male"), col=1:2, lwd=2, bty='n')
+
+survdiff(Surv(futime, death) ~ sex, data=mgus2)
+```
+
+## MGUS: Competing risks cumulative incidence
+Here we are coding 0=censoring, 2=death, 1=competing risk.
+```{r CI_MGUS}
+mgus2$etime <- with(mgus2, ifelse(pstat==0, futime, ptime))
+event <- with(mgus2, ifelse(pstat==0, 2*death, 1))
+mgus2$event <- factor(event, 0:2, labels=c("censor", "pcm", "death"))
+
+## print out some summaries
+# let's look at sample id for someone who had both a PCM and death
+mgus2[mgus2$id==56,]
+### check number of rows and investigate number of events
+nrow(mgus2)
+table(mgus2$event)
+sum(table(mgus2$event))
+
+#### now ce can plot the cumulative incidence curves. Survfit knows to do this based on their being 3 event types. 
+mfit2 <- survfit(Surv(etime, event) ~ sex, data=mgus2)
+plot(mfit2, col=c(1,2,1,2), lty=c(2,2,1,1), mark.time=FALSE, lwd=2, xscale=12,
+     xlab="Years post diagnosis", ylab="Cumulative Incidence")
+legend(240, .6, c("death:female", "death:male", "pcm:female", "pcm:male"),
+col=c(1,2,1,2), lty=c(1,1,2,2), lwd=2, bty='n')
+print(mfit2, rmean=240, scale=12)
+
+### nice part of the fit, you can look at the totals for the different ways people had events/censoring
+mfit2$transitions
+```
+
+## Mistake if you use 1-KM for the cumulative incidence
+Here we could naively use the indicator for pcm (pstat=1 or 0) and plot kaplan-meier curves. We can compare the 1-KM for pcm and see that it is inflated.
+
+```{r KMbad}
+pcmbad <- survfit(Surv(etime, pstat) ~ sex, data=mgus2)
+plot(pcmbad[2], lwd=2, fun="event", conf.int=FALSE, xscale=12,
+     xlab="Years post diagnosis", ylab="Fraction with PCM")
+lines(mfit2[2,"pcm"], lty=2, lwd=2, mark.time=FALSE, conf.int=FALSE)
+legend(-15, .25, c("Males, PCM, incorrect 1-KM curve", "Males, PCM, competing risk"),
+       col=1, lwd=2, lty=c(1,2), bty='n')
+```
+  
+## More informative CI plots from `tidycmprisk` package
+
+```{r tidy_CI}
+mgus2$eyears <- mgus2$etime/12
+
+cuminc(Surv(eyears, event) ~ sex, data=mgus2) %>%
+  ggcuminc(outcome = c("death", "pcm")) +
+  add_risktable() +
+  scale_ggsurvfit() +labs(x="Years since diagnosis")
+```
+
+## MGUS: Multistate Model Model
+### Contrary to the traditional competing risk approach, in a multstate model PCM is no longer treated as an absorbing state. You can transition from PCM to death and model that transition. The function tmerge() sets up the dataset for this model
+```{r mgus_mstate}
+## need to break ties between PCM and death, assume PCM happens first
+## this was done silently by survfit above
+ptemp <- with(mgus2, ifelse(ptime==futime & pstat==1, ptime-.1, ptime))
+data3 <- tmerge(mgus2, mgus2, id=id, death=event(futime, death),
+                pcm = event(ptemp, pstat))
+
+# Counting number of events a person experiences
+data3 <- tmerge(data3, data3, id, enum=cumtdc(tstart))
+with(data3, table(death, pcm))
+temp <- with(data3, ifelse(death==1, 2, pcm))
+
+# Need event to be a factor
+data3$event <- factor(temp, 0:2, labels=c("censor", "pcm", "death"))
+mfit3 <- survfit(Surv(tstart, tstop, event) ~ sex, data=data3, id=id)
+print(mfit3, rmean=240, digits=2)
+
+# Now can see folks can transition form PCM to death state
+mfit3$transitions
+
+# This is a different kind of plot, it is showing time in state
+# There is now less time in pcm than before as its not an aborbing state
+plot(mfit3[,"pcm"], mark.time=FALSE, col=1:2, lty=1:2, lwd=2,
+     xscale=12, xlab="Years post MGUS diagnosis", ylab="Fraction in the PCM state")
+legend(40, .4, c("female", "male"), lty=1:2, col=1:2, lwd=2, bty='n')
+```
+
+### Multistate: A different way of looking at things.
+
+In this approach, you think about probablity of being in each state. Since you can transition from one to the other, these states are not mutually exclusive. You can also decide that death after PCM is a different state than death without PCM.
+
+```{r mgus_mstate_bigpicture}
+# Death after PCM will correspond to data rows with
+# enum = 2 and event = death. We make this the 4th state
+d2 <- with(data3, ifelse(enum==2 & event=='death', 4, as.numeric(event)))
+e2 <- factor(d2, labels=c("censor", "pcm", "death w/o pcm", "death after pcm"))
+
+mfit4 <- survfit(Surv(tstart, tstop, e2) ~ sex, data=data3, id=id)
+
+plot(mfit2[2,], lty=c(1,2), xscale=12, mark.time=FALSE, lwd=2, 
+     xlab="Years post diagnosis", ylab="Probability in State")
+lines(mfit4[2,4], mark.time=FALSE, col=2, lty=1, lwd=2, conf.int=FALSE)
+legend(200, .5, c("Death w/o PCM", "ever PCM", "Death after PCM"), col=c(1,1,2),
+       lty=c(2,1,1), lwd=2, bty='n', cex=.82)
+```
+
+### Let's go back to mgus2 dataset our competing risk modeling with 3 end states: censor, PCM, death
+
+## MGUS: comparing CI Curves
+
+- Can fit the Fine and Gray model with a single covariate using coxph(). 
+- To do this need you first transform your data using the `finegray()` command in **survival** package to create a dataset for each competing risk you would like to test for covariate effects. Weights will also be created.
+
+## MGUS: Gray's Test and the Fine and Gray model
+
+- In each dataset created by *finegray*, four new variables have been added containing a survival time (fgstart, fgstop, fgstatus) with an ‘ordinary’ status of 0/1, along with a case weight and a large number of new rows.
+- A weighted Cox model fit to the constructed data set yields the Fine-Gray models for PCM and for death.
+- The score test in the univariable model is Gray's test.
+
+```{r mgus_FG}
+pcmdat <- finegray(Surv(etime, event) ~ ., data=mgus2, etype="pcm")
+deathdat <- finegray(Surv(etime, event) ~ ., data=mgus2, etype="death")
+
+fgPCM <- coxph(Surv(fgstart, fgstop, fgstatus) ~ sex, data=pcmdat, 
+               weights= fgwt)
+summary(fgPCM)
+
+fgDeath <- coxph(Surv(fgstart, fgstop, fgstatus) ~ sex, data=deathdat, 
+                 weights= fgwt)
+summary(fgDeath)
+
+## Checking PH
+cox.zph(fgPCM)
+cox.zph(fgDeath)
+
+```
+Note the same model can be fit using crr() in the cmprisk package. 
+
+## MGUS: Multivariable Fine and Gray 
+
+```{r FGmv}
+fgPCM2 <- coxph(Surv(fgstart, fgstop, fgstatus) ~ age + sex + mspike, 
+                data=pcmdat, weights= fgwt)
+summary(fgPCM2)
+
+fgDeath2 <- coxph(Surv(fgstart, fgstop, fgstatus) ~ age + sex + mspike, 
+                  data=deathdat, weights= fgwt)
+summary(fgDeath2)
+
+```
+
+## MGUS: Cause specific hazard model for PCM
+```{r PCM_csCox}
+### pstat is binary indicator: 1=PCM, 0=death or censoring
+pcm_csCox <- coxph(Surv(etime,pstat) ~ age+sex+mspike, data=mgus2)
+summary(pcm_csCox)
+```
+
+## MGUS: Multivariable Multi-state Cox regression modeling
+
+Great modeling choice. You can choose to go beyond the traditional competing risk framework and model transitions between states that go beyond that first transition. See helpful vignette by Terry Therneau. 
+
+```{r msCoxmv}
+cfit1 <- coxph(Surv(etime, event) ~ age + sex + mspike, mgus2, id=id)
+summary(cfit1)
+```
+
+## Check PH
+
+```{r msPH}
+cox.zph(fgPCM2)
+cox.zph(fgDeath2)
+cox.zph(cfit1)
+```
+
+
+
+
+
+
+# Parametric models
+
+## Leukemia example: Examining parametric assumptions
+
+Let's compare the fit of the exponential and Weibull models.
+
+```{r weibull}
+lfitsurv<-survfit(Surv(time, status) ~ x, data=aml)
+
+# Extract survival curves (probably an easier way to do this but the easy way; 
+# I knew only worked to plot the x axis as logt and I wanted similar 
+# plots for two transformations logt and t
+# Easy way: plot(lfitsurv,fun="cloglog") to plot against logt
+
+# Convert survival probabilities into matrix
+survmat <- matrix(lfitsurv$surv, nrow = 10)
+survM <- unique(survmat[, 1])
+survNM <- unique(survmat[, 2])
+
+# Extract event times for each group
+timeM <- unique(aml$time[aml$x == "Maintained" & aml$status == 1])
+timeNM <- unique(aml$time[aml$x == "Nonmaintained" & aml$status == 1])
+
+# Plot log-log survival curves to assess Weibull and Exponential fits
+par(mfrow = c(1, 2))
+
+# Weibull log-log plot
+plot(
+  log(timeM), log(-log(survM)), col = 1,
+  xlab = "log(t)", ylab = "log(-log(S(t)))",
+  main = "Examine Weibull log hazard", type = "l",
+  xlim = c(min(log(c(timeM, timeNM))), max(log(c(timeM, timeNM)))),
+  ylim = c(
+    min(log(-log(c(survM, survNM[!survNM == 0])))),
+    max(log(-log(c(survM, survNM[!survNM == 0]))))
+  )
+)
+points(log(timeNM), log(-log(survNM)), type = "l", col = 2)
+
+# Exponential log-log plot
+plot(
+  timeM, log(-log(survM)), col = 1,
+  xlab = "t", ylab = "log(-log(S(t)))",
+  main = "Examine exponential log hazard", type = "l",
+  xlim = c(min(c(timeM, timeNM)), max(c(timeM, timeNM))),
+  ylim = c(
+    min(log(-log(c(survM, survNM[!survNM == 0])))),
+    max(log(-log(c(survM, survNM[!survNM == 0]))))
+  )
+)
+points(timeNM, log(-log(survNM)), type = "l", col = 2)
+
+# Fit Weibull model
+lfitW <- survreg(Surv(time, status) ~ x, dist = 'weibull', data = aml)
+summary(lfitW)
+
+lfitE1 <- survreg(Surv(time, status) ~ x, dist = 'weibull', scale = 1, data = aml)
+lfitE2 <- survreg(Surv(time, status) ~ x, dist = "exponential", data = aml)
+summary(lfitE1)
+summary(lfitE2)
+
+lfitcox <- coxph(Surv(time, status) ~ x, data = aml)
+summary(lfitcox)
+
+```
+
+## Parameter estimates
+
+We can get both the acceleration parameter and Cox HR from the Weibull and exponential models.
+
+```{r weibull_params}
+# Weibull acceleration factor and Hazard Ratio comparisons
+library(SurvRegCensCov)
+ConvertWeibull(lfitW, conf.level = 0.95)
+
+# Hazard Ratio from Weibull model
+HR <- exp(-lfitW$coef[2] / lfitW$scale)
+HR
+
+# Exponential acceleration factor 
+accCI <- confint(lfitE2)[2, ]
+c(AF = exp(coef(lfitE2)[2]),
+  lower = exp(accCI[1]),
+  upper = exp(accCI[2]))
+
+# Exponential Hazard Ratio 
+HRCI <- exp(c(-accCI[2], -accCI[1]))
+c(HR = exp(-coef(lfitE2)[2]),
+  lower = HRCI[1],
+  upper = HRCI[2])
+
+# Cox HR
+summary(lfitcox)$conf.int
+```
+
+## With parametric distributions you can estimate mean survival
+
+```{r parametric_mean_Surv}
+# Mean survival 1/lambda
+# Maintained mean survival
+1/exp(-lfitE2$coef[1])
+
+# Nonmaintained mean survival
+1/exp(-(lfitE2$coef[1]+lfitE2$coef[2]))
+
+# Nonmaintained mean survival
+# Confidence intervals from add_ci
+library(ciTools)
+add_ci(aml, lfitE2, alpha = 0.05, names = c("lower", "upper"))
+
+# Works for Weibull too - values an exercise
+add_ci(aml, lfitW, alpha = 0.05, names = c("lower", "upper"))
+
+```

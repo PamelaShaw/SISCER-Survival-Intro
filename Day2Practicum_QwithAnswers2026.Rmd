@@ -1,0 +1,292 @@
+---
+title: "SISCER Survival Course R Practicum Day 2"
+author: "Pamela Shaw"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: yes
+    toc_float: yes
+---
+
+ A good place to start is exercise 8 from Day 1 practicum if you havent already done that, to get familar with Cox regression. Then proceed to day 2 exercises.
+
+
+```{r setup, warning = F, message = F}
+knitr::opts_chunk$set(echo = TRUE)
+library(survival)
+library(ggsurvfit)
+library(km.ci)
+library(survminer) #ggsurvplot
+library(gtsummary) #survfit table
+library(lmtest) # likelihood ratio test
+
+```
+
+We will consider three datasets for the Day 2 R practicum
+
+## Dataset: `veteran` and colon from the **survival** package
+This is the same dataset from the Day 1 R Practicum
+```{r load-data-veteran}
+data(cancer, package = "survival")
+
+# convert days to months
+veteran$months <- veteran$time / (365.25 / 12)  
+head(veteran)
+head(colon)
+```
+
+### Dataset: `Melanoma` from the **mass** package
+
+```{r load-data-melanoma, out.width=120}
+#install.packages("MASS")
+data(Melanoma, package = "MASS")
+melanoma <- Melanoma
+
+# The status variable is coded in a weird way, let's recode:
+# 0 = alive/censored, 1 = died from melanoma, 2 = died from other causes
+
+melanoma$status_cr <- factor(
+  ifelse(melanoma$status == 2, 0, ifelse(melanoma$status == 1, 1, 2)),
+  levels = c(0, 1, 2),
+  labels = c("censor", "melanoma", "other")
+)
+
+# A couple other recodes for convenience.
+melanoma$sex <- factor(melanoma$sex, levels = c(0, 1), labels = c("female", "male"))
+melanoma$ulcer <- factor(melanoma$ulcer, levels = c(0, 1), labels = c("absent", "present"))
+melanoma$years <- melanoma$time / 365.25
+melanoma$id <- seq_len(nrow(melanoma))
+
+head(melanoma)
+
+```
+
+You can read more about this dataset by typing help(Melanoma) into the R prompt.
+From the help file, it describes each covariate and provides this information 
+
+``The Melanoma data frame has data on 205 patients in Denmark with malignant melanoma.''
+Note the status indicator has 2 competing risks: death from melanoma and death from other causes.
+
+
+## Exercises
+
+1. Let's reconsider the example from Day 1 R practicum, where we saw hazard ratios for lung cancer cell type appeared to be changing over time in the veteran dataset.
+a) Instead of stratifying on cell-type, as we did in question 8 of Day 1 practicum, let's take the step function approach and allow the hazard ratio to change in the intervals 0-3 and 3+ month intervals as was done in lecture notes example. In this case we have some smaller categories so we do need to worry a bit about model stability, so picking only 2 time intervals. Notice what happens if you try a later cut point (say 6 months instead of 3. There wont be enough events in all groups in later time point).
+b) What does this model say about risk of large cell relative to squamous cell type. Look at stratified K-M curves by cell type. Does this make sense?
+c) Evaluate the proportional hazards assumption.
+
+2. Let's consider the Melanoma dataset, notice the status variable recode above and be sure to run it.
+a. Fit cumulative incidence curves for the two causes of death and an overall survival curve
+b. Fit a fine and gray model to consider whether the presence of an ulcer affected the risk (sub-distribution hazard ratio, sHR) for a melanoma death, adjusted for age and sex. 
+c. Fit a cause-specific Cox model (set both competing risk and censoring time to be status=0) with same variables in b and compare what each model is saying about the effect of the presence of an ulcer.
+d. Fit a multi-state Cox model and compare to c (following lecture notes example).
+
+3. Let's consider the colon cancer data set and fit a Weibull survival model to the death outcome. Let's say we are interested primarily in evaluating the survival on the two treatments, adjusted for sex and age. Compare the hazard ratio you get in this model to that from the Cox model. Can you plot a diagnostic plot to evaluate whether the Weibull model makes sense? For simplicity, lets consider only time invariant covariates and consider only the death data in this dataset.
+
+```{r colon_subset}
+# keep only death outcomes
+colonsub<-colon[colon$etype==2,]
+```
+
+## Answers
+
+### 1. Time-varying effect of cell type in the `veteran` data
+
+#### Part (a)
+
+We split follow-up time at 3 months and allow the cell type hazard ratios to be different in the 0-3 month and 3+ month intervals. This is the same basic step-function idea used in the lecture notes.
+
+```{r Q1a}
+vet.step <- survSplit(
+  Surv(months, status) ~ .,
+  data = veteran,
+  cut = 3,
+  episode = "tgroup",
+  id = "id"
+)
+
+### can check dataset new variable tgroup=1 if time <=3 months and 2 otherwise
+head(vet.step)
+
+vfit.cell.step <- coxph(
+  Surv(tstart, months, status) ~ trt + prior + karno + celltype:strata(tgroup),
+  data = vet.step
+)
+
+summary(vfit.cell.step)
+
+```
+
+If you move the cut point later, for example to 6 months, there are too few people still at risk in some cell type groups so estimates become unstable and standard errors become large.
+
+#### Part (b)
+
+The fitted model suggests that the hazard for large cell is lower than for squamous in the first 3 months, but higher after 3 months. So, the relative hazard magnitude is clearly changing over time, which is exactly why a model that assumed proportional hazards over the entire follow-up period was inadequate.
+
+```{r Q1b}
+# Get HR estimates and 95% CIs comparing large vs. squamous
+cell.hr <- summary(vfit.cell.step)$conf.int
+
+round(
+  rbind(
+    `Large vs squamous, 0-3 months` = c(
+      HR = 1 / cell.hr["celltypesquamous:strata(tgroup)tgroup=1", "exp(coef)"],
+      lower = 1 / cell.hr["celltypesquamous:strata(tgroup)tgroup=1", "upper .95"],
+      upper = 1 / cell.hr["celltypesquamous:strata(tgroup)tgroup=1", "lower .95"]
+    ),
+    `Large vs squamous, 3+ months` = c(
+      HR = 1 / cell.hr["celltypesquamous:strata(tgroup)tgroup=2", "exp(coef)"],
+      lower = 1 / cell.hr["celltypesquamous:strata(tgroup)tgroup=2", "upper .95"],
+      upper = 1 / cell.hr["celltypesquamous:strata(tgroup)tgroup=2", "lower .95"]
+    )
+  ),
+  2
+)
+
+# Study KM curves
+km.cell <- survfit(Surv(months, status) ~ celltype, data = veteran)
+plot(km.cell, col = 1:4, lwd = 2, xlab = "Months", ylab = "Survival probability")
+legend("topright", legend = levels(veteran$celltype), col = 1:4, lty = 1, lwd = 2, bty = "n")
+```
+
+This finding does make sense in reference to the Kaplan-Meier curves. The large-cell group has greater survival probability relative to squamous-cell before around 6 months and lower survival probability after.
+
+#### Part (c)
+
+After allowing the cell-type effect to change at 3 months, there is not strong evidence that the cell-type coefficients still violate proportional hazards. However, the Karnofsky score still shows some evidence of non-proportional hazards.
+
+```{r Q1c}
+cox.zph(vfit.cell.step, terms = FALSE)
+```
+
+### 2. Competing risks in the `melanoma` data
+
+#### Part (a)
+
+The overall survival curve treats both causes of death as events. The cumulative incidence curves separate death from melanoma and death from other causes.
+
+```{r Q2a}
+mfit.os <- survfit(Surv(years, status_cr != "censor") ~ 1, data = melanoma)
+mfit.ci <- survfit(Surv(years, status_cr) ~ 1, data = melanoma)
+
+par(mfrow = c(1, 2))
+plot(mfit.os, lwd = 2, xlab = "Years since diagnosis", ylab = "Overall survival")
+plot(
+  mfit.ci,
+  col = c(1, 2),
+  lty = c(1, 2),
+  mark.time = FALSE,
+  lwd = 2,
+  xlab = "Years since diagnosis",
+  ylab = "Cumulative incidence"
+)
+legend(
+  "topleft",
+  c("Melanoma death", "Other-cause death"),
+  col = c(1, 2),
+  lty = c(1, 2),
+  lwd = 2,
+  bty = "n",
+  cex = 0.8
+)
+par(mfrow = c(1, 1))
+```
+
+We see many more melanoma deaths than deaths from other causes in this dataset, so the melanoma cumulative incidence rises much more quickly.
+
+#### Part (b)
+
+The Fine-Gray model estimates the effect of ulcer status on the subdistribution hazard for melanoma death, while adjusting for age and sex.
+
+```{r Q2b}
+melanoma.fg <- finegray(
+  Surv(years, status_cr) ~ age + sex + ulcer,
+  data = melanoma,
+  etype = "melanoma"
+)
+
+mfit.fg <- coxph(
+  Surv(fgstart, fgstop, fgstatus) ~ age + sex + ulcer,
+  data = melanoma.fg,
+  weights = fgwt
+)
+
+summary(mfit.fg)
+```
+
+The presence of an ulcer is associated with a much higher cumulative incidence of melanoma death after adjustment for age and sex. The estimated subdistribution hazard ratio is about 3.8. In other words, patients with ulceration tend to have a noticeably higher melanoma cumulative incidence over follow-up.
+
+#### Part (c)
+
+For the cause-specific Cox model, we code melanoma death as 1 and treat both other-cause death and ordinary censoring as 0.
+
+```{r Q2c}
+melanoma$status_melanoma <- ifelse(melanoma$status_cr == "melanoma", 1, 0)
+
+mfit.cs <- coxph(Surv(years, status_melanoma) ~ age + sex + ulcer, data = melanoma)
+summary(mfit.cs)
+```
+
+The ulcer effect is again strong, with a cause-specific hazard ratio of about 4.0. Both models report hazard ratios, but they are hazard ratios for different things:
+
+- The Fine-Gray model gives a subdistribution hazard ratio. The finding from (b) suggests ulceration is associated with a higher cumulative incidence of melanoma death over time.
+- The cause-specific Cox model gives a cause-specific hazard ratio. This describes the instantaneous rate of melanoma death among patients who are still alive and have not yet had a melanoma death.
+
+In this dataset the two numerical estimates are very similar, which is not too surprising because there are only a small number of competing events.
+
+#### Part (d)
+
+We can also fit a multistate Cox model with one transition for melanoma death and one transition for death from other causes.
+
+```{r Q2d}
+mfit.ms <- coxph(Surv(years, status_cr) ~ age + sex + ulcer, data = melanoma, id = id)
+summary(mfit.ms)
+```
+
+For the melanoma death transition, the multistate Cox model gives the same estimates as the cause-specific Cox model in part (c). That is what we would expect in this simple competing-risks setting (where in this dataset you can only transition to one of the two competing risks but not between the two competing risks). The multistate fit is still useful because it also gives a separate set of coefficients for the other-cause death transition, where age looks more important and ulcer does not. Note, the multistate Cox and cause-specific Cox models would be more different if you could transition between the states- only the former model allows considers that.
+
+### 3. Weibull model for the `colon` data
+
+#### Cox and Weibull models
+
+```{r Q3_models}
+colonsub$sex <- factor(colonsub$sex, levels = c(0, 1), labels = c("female", "male"))
+
+cfit.colon <- coxph(Surv(time, status) ~ rx + sex + age, data = colonsub)
+summary(cfit.colon)
+
+wfit.colon <- survreg(Surv(time, status) ~ rx + sex + age, data = colonsub, dist = "weibull")
+summary(wfit.colon)
+
+### calculating HR from weibull model, formula from Day 2 lecture notes Rmarkdown file: Survival_Day2_LectureCodeExamples2026.html.
+weibull.hr <- exp(-coef(wfit.colon) / wfit.colon$scale)
+round(weibull.hr[c("rxLev", "rxLev+5FU", "sexmale", "age")], 3)
+```
+
+The two models tell essentially the same story, they both a type of  proportional hazards model. Compared with the control group, Lev alone has little evidence of benefit, while Lev+5FU is associated with a lower hazard of death. The hazard ratio for Lev+5FU relative to control is about 0.69 from the Cox model and about 0.67 from the Weibull model and for Lev alone the the hazard ratio is 0.97 from the Cox model and about 0.96 from the Weibull model
+
+#### Weibull diagnostic plot
+
+For a Weibull model, a useful diagnostic is a plot of `log(-log(S(t)))` versus `log(t)`. If the Weibull model is reasonable, the curves should look roughly linear. This is a bit of a subjective call and can be hard to judge. We could use cox.zph() to check ph assumption on the log scale ( see Day 2 Lecture notes, slide 68)
+
+
+
+```{r Q3_diagnostic}
+colon.km <- survfit(Surv(time, status) ~ rx, data = colonsub)
+
+plot(
+  colon.km,
+  fun = "cloglog",
+  col = 1:3,
+  lwd = 2,
+  mark.time = FALSE,
+  xlab = "log(Time)",
+  ylab = "log(-log(S(t)))",
+  main = "Checking the Weibull model"
+)
+legend("topleft", legend = levels(colonsub$rx), col = 1:3, lty = 1, lwd = 2, bty = "n")
+
+cox.zph(cfit.colon, transform= function(time) log(time))
+```
+
+The curves are reasonably close to straight lines, so the Weibull model looks acceptable here. The cox.zph test for proportional hazards also did not detect any violations on the log-scale.

@@ -1,0 +1,75 @@
+---
+title: "SISCER Survival Course R Practicum Day 2"
+author: "Pamela Shaw"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: yes
+    toc_float: yes
+---
+
+ A good place to start is exercise 8 from Day 1 practicum if you havent already done that, to get familar with Cox regression. Then proceed to day 2 exercises.
+
+
+```{r setup, warning = F, message = F}
+knitr::opts_chunk$set(echo = TRUE)
+library(survival)
+library(ggsurvfit)
+library(km.ci)
+library(survminer) #ggsurvplot
+library(gtsummary) #survfit table
+library(lmtest) # likelihood ratio test
+
+```
+
+We will consider three datasets for the Day 2 R practicum
+
+## Dataset: `veteran` and colon from the **survival** package
+This is the same dataset from the Day 1 R Practicum
+```{r load-data-veteran}
+data(cancer, package = "survival")
+
+# convert days to months
+veteran$months <- veteran$time / (365.25 / 12)  
+head(veteran)
+head(colon)
+```
+
+### Dataset: `Melanoma` from the **mass** package
+
+```{r load-data-melanoma, out.width=120}
+#install.packages("MASS")
+data(Melanoma, package = "MASS")
+head(Melanoma)
+
+#The status variable is coded in a weird way, let's recode
+# Be sure recode 0=alive, 1=died from melanoma, 2=dead from other causes.
+
+```
+
+You can read more about this dataset by typing help(Melanoma) into the R prompt.
+From the help file, it describes each covariate and provides this information 
+
+``The Melanoma data frame has data on 205 patients in Denmark with malignant melanoma.''
+Note the status indicator has 2 competing risks: death from melanoma and death from other causes.
+
+
+## Exercises
+
+1. Let's reconsider the example from Day 1 R practicum, where we saw hazard ratios for lung cancer cell type appeared to be changing over time in the veteran dataset
+a) Instead of stratifying on cell-type, as we did in question 8 of Day 1 practicum, let's take the step function approach and allow the hazard ratio to change in the intervals 0-3 and 3+ month intervals as was done in lecture notes example. In this case we have some smaller categories so we do need to worry a bit about model stability, so picking only 2 time intervals. Notice what happens if you try a later cut point (say 6 months instead of 3. There wont be enough events in all groups in later time point)
+b) What does model say about risk of large cell relative to squamous cell type. Look at stratified K-M curves by cell type. Does this make sense?
+c) Evaluate the proportional hazards assumption 
+
+2. Let's consider the Melanoma dataset, notice the status variable recode above and be sure to run it.
+a. Fit cumulative incidence curves for the two causes of death and an overall survival curve
+b. Fit a fine and gray model to consider whether the precense of an ulcer affected the risk (sub-distribution hazard ratio, sHR) for a melanoma death, adjusted for age and sex. 
+c. Fit a cause-specific Cox model (set both competing risk and censoring time to be status=0) with same variables in b and compare what each model is saying about the effect of the presence of an ulcer.
+d. Fit a multi-state Cox model and compare to c (following lecture notes example).
+
+3. Let's consider the colon cancer data set and fit a Weibull survival model to the death outcome. Let's say we are interested primarily in evaluating the survival on the two treatments, adjusted for sex and age. Compare the hazard ratio you get in this model to that from the Cox model. Can you plot a diagnostic plot to evaluate whether the Weibull model makes sense?  For simplicity, lets consider only time invariant covariates and consider only the death data in this dataset
+
+```{r colon_subset}
+colonsub<-colon[colon$etype==2,]
+```
+
